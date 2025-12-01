@@ -1,0 +1,70 @@
+---
+- name: User Management (Create or Delete)
+  hosts: all
+  become: true
+  vars:
+    target_user: "{{ new_user }}"
+
+  tasks:
+    # CREATE USER LOGIC
+    - name: Perform User Creation
+      block:
+        - name: Read generated public key (Controller side)
+          set_fact:
+            key_content: "{{ lookup('file', pubkey_file) }}"
+
+        - name: Ensure the 'readers' group exists
+          group:
+            name: readers
+            state: present
+
+        - name: Ensure user exists and is added to group
+          user:
+            name: "{{ target_user }}"
+            comment: "Client User"
+            groups: readers
+            append: yes
+            create_home: yes
+            shell: /bin/bash
+            state: present
+
+        - name: Ensure .ssh directory exists
+          file:
+            path: "/home/{{ target_user }}/.ssh"
+            state: directory
+            owner: "{{ target_user }}"
+            group: "{{ target_user }}"
+            mode: "0700"
+
+        - name: Install the generated Public Key
+          authorized_key:
+            user: "{{ target_user }}"
+            key: "{{ key_content }}"
+            state: present
+            
+      when: user_action == 'CREATE'
+
+    # DELETE USER LOGIC
+    - name: Perform User Deletion
+      block:
+        - name: Fail if username is empty 
+          fail:
+            msg: "No username provided. Aborting to prevent accidents."
+          when: target_user is not defined or target_user | length == 0
+
+        - name: Remove user and home directory
+          user:
+            name: "{{ target_user }}"
+            state: absent
+            remove: yes
+            force: yes
+
+        - name: Verify deletion
+          command: "id {{ target_user }}"
+          register: user_check
+          ignore_errors: true
+
+        - debug:
+            msg: "User {{ target_user }} deleted successfully."
+          when: user_check.rc != 0
+      when: user_action == 'DELETE'
